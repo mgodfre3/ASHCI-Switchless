@@ -5,7 +5,7 @@
 #region  Config
   
     #Input Server Names
-        $Servers="AzSHCI1","AzSHCI2","AzSHCI","AzSHCI4"
+        $Servers="AzSHCI1","AzSHCI2"
         #alternatively you can just do $Servers="AzSHCI1","AzSHCI2","AzSHCI","AzSHCI4". The result is the same
 
         #NetworkAdapter Names
