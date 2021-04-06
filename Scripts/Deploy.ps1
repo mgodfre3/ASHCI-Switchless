@@ -2,14 +2,14 @@
 # Run from DC or Management VM #
 ################################
 
-#region LAB Config
-    # 2,3,4,8, or 16 nodes
-        $numberofnodes=4
-        $ServersNamePrefix="AzSHCI"
-    #generate servernames (based number of nodes and serversnameprefix)
-        $Servers=1..$numberofnodes | ForEach-Object {"$ServersNamePrefix$_"}
+#region  Config
+  
+    #Input Server Names
+        $Servers="AzSHCI1","AzSHCI2","AzSHCI","AzSHCI4"
         #alternatively you can just do $Servers="AzSHCI1","AzSHCI2","AzSHCI","AzSHCI4". The result is the same
 
+        #NetworkAdapter Names
+       
     #Cluster Name
         $ClusterName="AzSHCI-Cluster"
 
@@ -23,7 +23,7 @@
         $DistributedManagementPoint=$true
 
     #Witness type
-        $WitnessType="FileShare" #or Cloud
+        $WitnessType="Cloud"#orFileShare
         #if cloud then configure following (use your own, these are just examples)
         <#
         $CloudWitnessStorageAccountName="MyStorageAccountName"
@@ -39,6 +39,12 @@
 
     ## Networking ##
         $vSwitchName="vSwitch"
+        #Provide Network Adapter Names
+        $eth0="Management Physical 1"
+        $eth1="Managment Physical 2"
+        $SMB1="SMB1"
+        $SMB2="SMB2"
+        $smb_prefix="24"
         
         $NumberOfStorageNets=2
 
@@ -47,18 +53,17 @@
         $StorVLAN=10
 
         #IF Stornets are 2 (in larger clusters it worth keep storage traffic local to each TOR switch)
-        $StorNet1="192.168.10.0/24"
-        $StorNet2="192.168.20.0/24"
+        $StorNet1="192.168.10.10"
+        $StorNet2="192.168.20.10"
         $StorVLAN1=10
         $StorVLAN2=20
 
         $SRIOV=$true #Deploy SR-IOV enabled switch (best practice is to enable if possible)
 
-        #startIP of adapters that will be added to SET Switch
-        $AdaptersIPPrefix="10.0.0.*"
+       
 
     #start IP for storage network
-        $IP=1
+        $IP=10
 
     #Real hardware?
         $RealHW=$true #will configure VMQ not to use CPU 0 if $True, configures power plan
@@ -114,24 +119,7 @@
     #real VMs? If true, script will create real VMs on mirror disks from vhd you will provide during the deployment. The most convenient is to provide NanoServer
         $realVMs=$false
         $NumberOfRealVMs=2 #number of VMs on each mirror disk
-<#
-    #ask for parent VHDx if real VMs will be created
-        if ($realVMs){
-            [reflection.assembly]::loadwithpartialname("System.Windows.Forms")
-            $openFile = New-Object System.Windows.Forms.OpenFileDialog -Property @{
-                Title="Please select parent VHDx." # You can copy it from parentdisks on the Hyper-V hosts somewhere into the lab and then browse for it"
-            }
-            $openFile.Filter = "VHDx files (*.vhdx)|*.vhdx" 
-            If($openFile.ShowDialog() -eq "OK"){
-                Write-Host  "File $($openfile.FileName) selected" -ForegroundColor Cyan
-            } 
-            if (!$openFile.FileName){
-                Write-Host "No VHD was selected... Skipping VM Creation" -ForegroundColor Red
-            }
-            $VHDPath = $openFile.FileName
-        }
-#>
-#endregion
+
 
 #region install features for management (Client needs RSAT, Server/Server Core have different features)
     $WindowsInstallationType=Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\' -Name InstallationType
@@ -358,57 +346,34 @@
 #region configure Networking (best practices are covered in this guide http://aka.ms/ConvergedRDMA ). For more information about networking you can look at this scenario: https://github.com/microsoft/WSLab/tree/master/Scenarios/S2D%20and%20Networks%20deep%20dive
     #Create Virtual Switches and Virtual Adapters
         if ($SRIOV){
-            Invoke-Command -ComputerName $servers -ScriptBlock {New-VMSwitch -Name $using:vSwitchName -EnableEmbeddedTeaming $TRUE -EnableIov $true -NetAdapterName (Get-NetIPAddress -IPAddress $using:AdaptersIPPrefix ).InterfaceAlias}
+            Invoke-Command -ComputerName $servers -ScriptBlock {New-VMSwitch -Name $using:vSwitchName -EnableEmbeddedTeaming $TRUE -EnableIov $true -NetAdapterName (Get-NetIPAddress | where name -like "$eth0" ).InterfaceAlias;
+            Add-VMSwitchTeamMember -VMSwitch $using:vSwitchName -NetAdapterName ($using:eth1).Name}
         }else{
-            Invoke-Command -ComputerName $servers -ScriptBlock {New-VMSwitch -Name $using:vSwitchName -EnableEmbeddedTeaming $TRUE -NetAdapterName (Get-NetIPAddress -IPAddress $using:AdaptersIPPrefix).InterfaceAlias}
+            Invoke-Command -ComputerName $servers -ScriptBlock {New-VMSwitch -Name $using:vSwitchName -EnableEmbeddedTeaming $TRUE -NetAdapterName (Get-NetIPAddress | where name -like "$eth0" ).InterfaceAlias;
+                Add-VMSwitchTeamMember -VMSwitch $using:vSwitchName -NetAdapterName ($using:eth1).Name}
         }
 
         $Servers | ForEach-Object {
             #Configure vNICs
             Rename-VMNetworkAdapter -ManagementOS -Name $vSwitchName -NewName Management -ComputerName $_
-            Add-VMNetworkAdapter -ManagementOS -Name SMB01 -SwitchName $vSwitchName -CimSession $_
-            Add-VMNetworkAdapter -ManagementOS -Name SMB02 -SwitchName $vSwitchName -Cimsession $_
-
+           
             #configure IP Addresses
-            If ($NumberOfStorageNets -eq 1){
-                New-NetIPAddress -IPAddress ($StorNet+$IP.ToString()) -InterfaceAlias "vEthernet (SMB01)" -CimSession $_ -PrefixLength 24
-                $IP++
-                New-NetIPAddress -IPAddress ($StorNet+$IP.ToString()) -InterfaceAlias "vEthernet (SMB02)" -CimSession $_ -PrefixLength 24
-                $IP++
-            }
+            New-NetIPAddress -InterfaceAlias $using:smb1.interfacealias -IPAddress ($StorNet1+$IP.ToString()) -Prefixlength 24 $IP++
+            New-NetIPAddress -InterfaceAlias $using:smb2.interfacealias -IPAddress ($StorNet2+$IP.ToString()) -Prefixlength 24 $IP++
 
-            If($NumberOfStorageNets -eq 2){
-                New-NetIPAddress -IPAddress ($StorNet1+$IP.ToString()) -InterfaceAlias "vEthernet (SMB01)" -CimSession $_ -PrefixLength 24
-                New-NetIPAddress -IPAddress ($StorNet2+$IP.ToString()) -InterfaceAlias "vEthernet (SMB02)" -CimSession $_ -PrefixLength 24
-                $IP++
-            }
         }
 
         Start-Sleep 5
         Clear-DnsClientCache
 
-        #Configure the host vNIC to use a Vlan.  They can be on the same or different VLans 
-            If ($NumberOfStorageNets -eq 1){
-                Set-VMNetworkAdapterVlan -VMNetworkAdapterName SMB01 -VlanId $StorVLAN -Access -ManagementOS -CimSession $Servers
-                Set-VMNetworkAdapterVlan -VMNetworkAdapterName SMB02 -VlanId $StorVLAN -Access -ManagementOS -CimSession $Servers
-            }else{
-                Set-VMNetworkAdapterVlan -VMNetworkAdapterName SMB01 -VlanId $StorVLAN1 -Access -ManagementOS -CimSession $Servers
-                Set-VMNetworkAdapterVlan -VMNetworkAdapterName SMB02 -VlanId $StorVLAN2 -Access -ManagementOS -CimSession $Servers
-            }
+     
 
         #Restart each host vNIC adapter so that the Vlan is active.
-            Restart-NetAdapter "vEthernet (SMB01)" -CimSession $Servers 
-            Restart-NetAdapter "vEthernet (SMB02)" -CimSession $Servers
+            Restart-NetAdapter "SMB01" -CimSession $Servers 
+            Restart-NetAdapter "SMB02" -CimSession $Servers
 
         #Enable RDMA on the host vNIC adapters
-            Enable-NetAdapterRDMA "vEthernet (SMB01)","vEthernet (SMB02)" -CimSession $Servers
-
-        #Associate each of the vNICs configured for RDMA to a physical adapter that is up and is not virtual (to be sure that each RDMA enabled ManagementOS vNIC is mapped to separate RDMA pNIC)
-            Invoke-Command -ComputerName $servers -ScriptBlock {
-                    $physicaladapters=(get-vmswitch $using:vSwitchName).NetAdapterInterfaceDescriptions | Sort-Object
-                    Set-VMNetworkAdapterTeamMapping -VMNetworkAdapterName "SMB01" -ManagementOS -PhysicalNetAdapterName (get-netadapter -InterfaceDescription $physicaladapters[0]).name
-                    Set-VMNetworkAdapterTeamMapping -VMNetworkAdapterName "SMB02" -ManagementOS -PhysicalNetAdapterName (get-netadapter -InterfaceDescription $physicaladapters[1]).name
-                }
+            Enable-NetAdapterRDMA "SMB01","SMB02" -CimSession $Servers
 
         #Configure Jumbo Frames
             if ($JumboSize -ne 1514){
@@ -588,7 +553,7 @@
             Add-CauClusterRole -ClusterName $ClusterName -MaxFailedNodes 0 -RequireAllNodesOnline -EnableFirewallRules -VirtualComputerObjectName $CAURoleName -Force -CauPluginName Microsoft.WindowsUpdatePlugin -MaxRetriesPerNode 3 -CauPluginArguments @{ 'IncludeRecommendedUpdates' = 'False' } -StartDate "3/2/2017 3:00:00 AM" -DaysOfWeek 4 -WeeksOfMonth @(3) -verbose
     }
 #endregion
-
+<#
 #region Create Fault Domains (just an example) https://docs.microsoft.com/en-us/windows-server/failover-clustering/fault-domains
 
 #just some examples for Rack/Chassis fault domains.
@@ -674,8 +639,7 @@
     
     #show fault domain configuration
         Get-ClusterFaultDomainxml -CimSession $ClusterName
-    
-    <#Alternate way
+    <# Alternate way
     if ($numberofnodes -eq 4){
         New-ClusterFaultDomain -Name "Rack01"    -FaultDomainType Rack    -Location "Contoso HQ, Room 4010, Aisle A, Rack 01"           -CimSession $ClusterName
         New-ClusterFaultDomain -Name "SEA"       -FaultDomainType Site    -Location "Contoso HQ, 123 Example St, Room 4010, Seattle"    -CimSession $ClusterName
@@ -755,81 +719,6 @@
 
 #endregion
 
-#region Create Volumes to use max capacity. It also depends what mix of devices you have https://github.com/Microsoft/WSLab/tree/master/Scenarios/S2D%20and%20Volumes%20deep%20dive
-
-    #calculate reserve
-    $pool=Get-StoragePool -CimSession $clustername -FriendlyName s2D*
-    $HDDCapacity= ($pool |Get-PhysicalDisk -CimSession $clustername | where-object mediatype -eq HDD | Measure-Object -Property Size -Sum).Sum
-    $HDDMaxSize=  ($pool |Get-PhysicalDisk -CimSession $clustername | where-object mediatype -eq HDD | Measure-Object -Property Size -Maximum).Maximum
-    $SSDCapacity= ($pool |Get-PhysicalDisk -CimSession $clustername | where-object mediatype -eq SSD | where-object usage -ne journal | Measure-Object -Property Size -Sum).Sum
-    $SSDMaxSize=  ($pool |Get-PhysicalDisk -CimSession $clustername | where-object mediatype -eq SSD | where-object usage -ne journal | Measure-Object -Property Size -Maximum).Maximum
-
-    $numberofNodes=(Get-ClusterNode -Cluster $clustername).count
-    if ($numberofNodes -eq 2){
-        if ($SSDCapacity){
-        $SSDCapacityToUse=$SSDCapacity-($numberofNodes*$SSDMaxSize)-100GB #100GB just some reserve (16*3 = perfhistory)+some spare capacity
-        $sizeofvolumeonSSDs=$SSDCapacityToUse/2/$numberofNodes
-        }
-        if ($HDDCapacity){
-        $HDDCapacityToUse=$HDDCapacity-($numberofNodes*$HDDMaxSize)-100GB #100GB just some reserve (16*3 = perfhistory)+some spare capacity
-        $sizeofvolumeonHDDs=$HDDCapacityToUse/2/$numberofNodes
-        }
-    }else{
-        if ($SSDCapacity){
-        $SSDCapacityToUse=$SSDCapacity-($numberofNodes*$SSDMaxSize)-100GB #100GB just some reserve (16*3 = perfhistory)+some spare capacity
-        $sizeofvolumeonSSDs=$SSDCapacityToUse/3/$numberofNodes
-        }
-        if ($HDDCapacity){
-        $HDDCapacityToUse=$HDDCapacity-($numberofNodes*$HDDMaxSize)-100GB #100GB just some reserve (16*3 = perfhistory)+some spare capacity
-        $sizeofvolumeonHDDs=$HDDCapacityToUse/3/$numberofNodes
-        }
-    }
-
-    #create volumes
-    1..$numberofNodes | ForEach-Object {
-        if ($sizeofvolumeonHDDs){
-            New-Volume -CimSession $ClusterName -FileSystem CSVFS_ReFS -StoragePoolFriendlyName S2D* -Size $sizeofvolumeonHDDs -FriendlyName "MyVolumeonHDDs$_" -MediaType HDD
-        }
-        if ($sizeofvolumeonSSDs){
-            New-Volume -CimSession $ClusterName -FileSystem CSVFS_ReFS -StoragePoolFriendlyName S2D* -Size $sizeofvolumeonSSDs -FriendlyName "MyVolumeonSSDs$_" -MediaType SSD   
-        }
-    }
-
-    start-sleep 10
-#endregion
-
-#region Create some VMs (3 per each CSV disk) https://github.com/Microsoft/WSLab/tree/master/Scenarios/S2D%20and%20Bulk%20VM%20creation
-    Start-Sleep -Seconds 60 #just to a bit wait as I saw sometimes that first VMs fails to create
-    if ($realVMs -and $VHDPath){
-        $CSVs=(Get-ClusterSharedVolume -Cluster $ClusterName).Name
-        foreach ($CSV in $CSVs){
-            $CSV=($CSV -split '\((.*?)\)')[1]
-            1..$NumberOfRealVMs | ForEach-Object {
-                $VMName="TestVM$($CSV)_$_"
-                New-Item -Path "\\$ClusterName\ClusterStorage$\$CSV\$VMName\Virtual Hard Disks" -ItemType Directory
-                Copy-Item -Path $VHDPath -Destination "\\$ClusterName\ClusterStorage$\$CSV\$VMName\Virtual Hard Disks\$VMName.vhdx" 
-                New-VM -Name $VMName -MemoryStartupBytes 512MB -Generation 2 -Path "c:\ClusterStorage\$CSV\" -VHDPath "c:\ClusterStorage\$CSV\$VMName\Virtual Hard Disks\$VMName.vhdx" -CimSession ((Get-ClusterNode -Cluster $ClusterName).Name | Get-Random)
-                Add-ClusterVirtualMachineRole -VMName $VMName -Cluster $ClusterName
-            }
-        }
-        #Start all VMs
-        Start-VM -VMname * -CimSession (Get-ClusterNode -Cluster $clustername).Name
-    }else{
-        $CSVs=(Get-ClusterSharedVolume -Cluster $ClusterName).Name
-        foreach ($CSV in $CSVs){
-                $CSV=($CSV -split '\((.*?)\)')[1]
-                1..3 | ForEach-Object {
-                    $VMName="TestVM$($CSV)_$_"
-                    Invoke-Command -ComputerName ((Get-ClusterNode -Cluster $ClusterName).Name | Get-Random) -ArgumentList $CSV,$VMName -ScriptBlock {
-                        #create some fake VMs
-                        New-VM -Name $using:VMName -NewVHDPath "c:\ClusterStorage\$($using:CSV)\$($using:VMName)\Virtual Hard Disks\$($using:VMName).vhdx" -NewVHDSizeBytes 32GB -SwitchName $using:vSwitchName -Generation 2 -Path "c:\ClusterStorage\$($using:CSV)\" -MemoryStartupBytes 32MB
-                    }
-                    Add-ClusterVirtualMachineRole -VMName $VMName -Cluster $ClusterName
-                }
-        }
-    }
-#endregion
-
 #region Register Azure Stack HCI to Azure
     #download Azure module
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
@@ -896,47 +785,4 @@
     UnRegister-AzStackHCI -ComputerName $ClusterName -Confirm:0 -UseDeviceAuthentication
     Get-AzResourceGroup -Name "$ClusterName-rg" | Remove-AzResourceGroup -Force
     #>
-#endregion
-
-#region (optional) Install Windows Admin Center Gateway https://github.com/microsoft/WSLab/tree/master/Scenarios/Windows%20Admin%20Center%20and%20Enterprise%20CA#gw-mode-installation-with-self-signed-cert
-    ##Install Windows Admin Center Gateway 
-    $GatewayServerName="WACGW"
-    #Download Windows Admin Center if not present
-    if (-not (Test-Path -Path "$env:USERPROFILE\Downloads\WindowsAdminCenter.msi")){
-        Start-BitsTransfer -Source https://aka.ms/WACDownload -Destination "$env:USERPROFILE\Downloads\WindowsAdminCenter.msi"
-    }
-    #Create PS Session and copy install files to remote server
-    Invoke-Command -ComputerName $GatewayServerName -ScriptBlock {Set-Item -Path WSMan:\localhost\MaxEnvelopeSizekb -Value 4096}
-    $Session=New-PSSession -ComputerName $GatewayServerName
-    Copy-Item -Path "$env:USERPROFILE\Downloads\WindowsAdminCenter.msi" -Destination "$env:USERPROFILE\Downloads\WindowsAdminCenter.msi" -ToSession $Session
-
-    #Install Windows Admin Center
-    Invoke-Command -Session $session -ScriptBlock {
-        Start-Process msiexec.exe -Wait -ArgumentList "/i $env:USERPROFILE\Downloads\WindowsAdminCenter.msi /qn /L*v log.txt REGISTRY_REDIRECT_PORT_80=1 SME_PORT=443 SSL_CERTIFICATE_OPTION=generate"
-    } -ErrorAction Ignore
-
-    $Session | Remove-PSSession
-
-    #add certificate to trusted root certs (workaround to trust HTTPs cert on WACGW)
-    start-sleep 10
-    $cert = Invoke-Command -ComputerName $GatewayServerName -ScriptBlock {Get-ChildItem Cert:\LocalMachine\My\ |where subject -eq "CN=Windows Admin Center"}
-    $cert | Export-Certificate -FilePath $env:TEMP\WACCert.cer
-    Import-Certificate -FilePath $env:TEMP\WACCert.cer -CertStoreLocation Cert:\LocalMachine\Root\
-
-    #Configure Resource-Based constrained delegation
-    $gatewayObject = Get-ADComputer -Identity $GatewayServerName
-    $computers = (Get-ADComputer -Filter {OperatingSystem -eq "Azure Stack HCI"}).Name
-
-    foreach ($computer in $computers){
-        $computerObject = Get-ADComputer -Identity $computer
-        Set-ADComputer -Identity $computerObject -PrincipalsAllowedToDelegateToAccount $gatewayObject
-    }
-
-    ##Install Edge
-    Start-BitsTransfer -Source "https://aka.ms/edge-msi" -Destination "$env:USERPROFILE\Downloads\MicrosoftEdgeEnterpriseX64.msi"
-    #start install
-    Start-Process -Wait -Filepath msiexec.exe -Argumentlist "/i $env:UserProfile\Downloads\MicrosoftEdgeEnterpriseX64.msi /q"
-    #start Edge
-    start-sleep 5
-    & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 #endregion
