@@ -1,0 +1,17 @@
+Create-Variables =Pending
+ConfigureWorkstation = Pending
+Configure-Nodes = Pending
+Configure-Node01 = Pending
+Configure=Node02 = Pending
+Prepare-Storage = Pending
+Create-Cluster = Pending
+Set-LiveMigration = Pending
+Deploy-S2D = Pending
+Enable-CAU = Pending
+Confirm-FunctionLevels = Pending
+Create-CSV = Pending
+Create-CloudWitness = Pending
+Set-Netintents = Pending
+Register-HCICluster = Pending
+Deploy-AKS = Pending
+Done
