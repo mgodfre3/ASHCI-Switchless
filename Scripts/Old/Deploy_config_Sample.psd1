@@ -22,7 +22,7 @@ DNSIP = "172.16.100.20" #Set DNS IP(s) for DNS servers i.e. Domain Controllers
 
 
 
-#Cluster Paramters
+#Cluster Parameters
 ClusterName = "ashcicl" #Set Short name of Cluster. This account can be Prestaged in Active Directory, just make sure it is "Disabled."
 ClusterIP = "192.168.0.115" #Provide Cluster IP Address
 
@@ -32,6 +32,9 @@ StoragePoolName= "ASHCICL Storage Pool 1" #Provide Desired Friendly name of Stor
 CSVFriendlyname="Volume01-Thin" #Provide First Cluster Shared Volume Friendly Name, this will be created as a Nested-2-Way Mirror Volume by default.
 CSVSize=5GB #Size in GB of First Cluster Shared Volume, Remember Nested-2 Way Mirror is a Storage Efficency of 25%, so 1 TB uses 4 TB of the Storage Pool.
 
+#CLoud Witness 
+CWStorageAct="" #Provide Name of Cloud Witness Storage Accounts
+CWStorageKey="" #Provide Storage Acocunt Key
 #######################################################################################
     #AKS-HCI parameters
     AKSEnable="false"

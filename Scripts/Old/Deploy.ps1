@@ -175,7 +175,7 @@ Write-Host -ForegroundColor Green -Object "Enable Storage Spaces Direct"
 Enable-ClusterStorageSpacesDirect  -CimSession $config.ClusterName -PoolFriendlyName $config.StoragePoolName -Confirm:0 
 
 #########################################################################################################################################
-
+<# Not used, leaving for 22H2 in future
 #############Configure for 21H2 Preview Channel###############
 Invoke-Command ($ServerList) {
     Set-WSManQuickConfig -Force
@@ -187,6 +187,7 @@ Invoke-Command ($ServerList) {
 Restart-Computer -ComputerName $ServerList -Protocol WSMan -Wait -For PowerShell -Force
 #Pause for a bit - let changes apply before moving on...
 Start-Sleep 180
+#> 
 
 #############Enable CAU and update to latest 21H2 bits...###############
 #First we must add the AD cluster object to the Cluster Objects AD Group
@@ -194,6 +195,7 @@ $ADClusterObj = $config.ClusterName + "$"
 Add-ADGroupMember -Identity ClusterObjects -Members $ADClusterObj
 #Now we can add the CAU role...
 Add-CauClusterRole -ClusterName $config.ClusterName -MaxFailedNodes 0 -RequireAllNodesOnline -EnableFirewallRules -Force -CauPluginName Microsoft.WindowsUpdatePlugin -MaxRetriesPerNode 3 -CauPluginArguments @{ 'IncludeRecommendedUpdates' = 'False' } -StartDate "3/2/2017 3:00:00 AM" -DaysOfWeek 4 -WeeksOfMonth @(3) -verbose
+
 
 #Enable KSR on ALl and Future CAU 
 Get-Cluster -Name $config.ClusterName | Set-ClusterParameter -Name CauEnableSoftReboot -Value 1 -Create
@@ -244,7 +246,7 @@ New-Volume -StoragePoolFriendlyName $config.StoragePoolName -FriendlyName Volume
 write-host -ForegroundColor Green -Object "Set Cloud Witness"
 
 #Set Cloud Witness
-Set-ClusterQuorum -Cluster $config.ClusterName -Credential $AADCred -CloudWitness -AccountName hciwitness  -AccessKey "lj7LGQrmkyDoMH2AnHXQjp8EI+gWMPsKDYmMBv1mL7Ldo0cwz+aYIoDA8fO3hJoSyY/fUksiOWlZ/8Heme1XGw=="
+Set-ClusterQuorum -Cluster $config.ClusterName -Credential $AADCred -CloudWitness -AccountName $CWStorageAccount  -AccessKey $CWStoageKey
 
 #########################################################################################################################################
 
