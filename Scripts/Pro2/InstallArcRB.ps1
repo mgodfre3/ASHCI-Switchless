@@ -78,24 +78,14 @@ Connect-AzAccount -ServicePrincipal -Subscription $AzureSubID -Tenant $AzureTena
 $context = Get-AzContext # Azure credential
 $armtoken = Get-AzAccessToken
 $graphtoken = Get-AzAccessToken -ResourceTypeName AadGraph
-<#
-#AzResourceGroup
 
-$rg=Get-AzResourceGroup -Name $AKSResourceGroupName
-if ($rq -eq $null)
-{
-New-AzResourceGroup -Name $AKSResourceGroupName -Location "west central us" 
-    }
-else {write-host "$AKSResourceGroupName exists"
-}
-#>
 
 Write-Host "Prepping AKS Install"
 
 
     
 
-    $vnet = New-AksHciNetworkSetting -name $AKSvnetname -vSwitchName $AKSvSwitchName -k8sNodeIpPoolStart $AKSNodeStartIP -k8sNodeIpPoolEnd $AKSNodeEndIP -vipPoolStart $AKSVIPStartIP -vipPoolEnd $AKSVIPEndIP -ipAddressPrefix $AKSIPPrefix -gateway $AKSGWIP -dnsServers $AKSDNSIP         
+    $vnet = New-AksHciNetworkSetting -name $AKSvnetname -vSwitchName $AKSvSwitchName -k8sNodeIpPoolStart $AKSNodeStartIP -k8sNodeIpPoolEnd $AKSNodeEndIP -vipPoolStart $AKSVIPStartIP -vipPoolEnd $AKSVIPEndIP -ipAddressPrefix $AKSIPPrefix -gateway $AKSGWIP -dnsServers $AKSDNSIP        
 
     Set-AksHciConfig -imageDir $AKSImagedir -workingDir $AKSWorkingdir -cloudConfigLocation $AKSCloudConfigdir -vnet $vnet -cloudservicecidr $AKSCloudSvcidr
 
@@ -166,24 +156,43 @@ mkdir $csv_path\ResourceBridge
 
 az login --service-principal -u $AzureSPNAPPId -p $AzureSPNSecret --tenant $AzureTenantID
 
-New-ArcHciConfigFiles -subscriptionId $AzureSubID -location $Location -resourceGroup $resbridgeresource_group -resourceName $resource_name -workDirectory $csv_path\ResourceBridge -controlPlaneIP $resbridgecpip  -k8snodeippoolstart $resbridgeip -k8snodeippoolend $resbridgeip -gateway $AKSGWIP -dnsservers $config[0].AKSDNSIP -ipaddressprefix $AKSIPPrefix   
+New-ArcHciConfigFiles -subscriptionId $AzureSubID -location $Location -resourceGroup $resbridgeresource_group -resourceName $resource_name -workDirectory $csv_path\ResourceBridge -controlPlaneIP $resbridgecpip  -k8snodeippoolstart $resbridgeip -k8snodeippoolend $resbridgeip -gateway $AKSGWIP -dnsservers $AKSDNSIP -ipaddressprefix $AKSIPPrefix   
  
 az arcappliance validate hci --config-file $csv_path\ResourceBridge\hci-appliance.yaml
 
-#start-sleep 60 
+ 
 
 az arcappliance prepare hci --config-file $csv_path\ResourceBridge\hci-appliance.yaml
 
-#Start-Sleep 60
+
 
 az arcappliance deploy hci --config-file  $csv_path\ResourceBridge\hci-appliance.yaml --outfile $env:USERPROFILE\.kube\config
 
-#Start-Sleep 60
+
 az arcappliance create hci --config-file $csv_path\ResourceBridge\hci-appliance.yaml --kubeconfig $env:USERPROFILE\.kube\config
 
+Write-Host "Arc Resource Bridge has been deployed" -ForegroundColor Green -BackgroundColor Black
+
+
+
+    
 }
 
+Function AKSMultipleAdmins {
+param()
+New-Item -Path C:\clusterstoreage\volume01 -ItemType Directory -Name "AKS-Identity"
 
+$loginfile="C:\clusterstoreage\volume01\AKS-Identity\login.yaml"
+$MOCRole="AKSAdmin" #provide MOC Role Assignment Name
+
+New-MocIdentity -name $MOCRole -validityDays 365 -location MocLocation -outfile $loginFile
+
+New-MocRoleAssignment -identityName $MOCRole -roleName "GalleryImageContributor" -location MocLocation
+New-MocRoleAssignment -identityName $MocRole -roleName "SecretReader" -location MocLocation
+New-MocRoleAssignment -identityName $MocRole -roleName "NodeReader" -location MocLocation
+
+
+}
 
 
 
@@ -191,9 +200,8 @@ $azlogin = Connect-AzAccount -Subscription $azuresubid -UseDeviceAuthentication
 Select-AzSubscription -Subscription $AzureSubID
 #Set AD Domain Cred
 $AzDJoin = Get-AzKeyVaultSecret -VaultName $KeyVault -Name "DomainJoinerSecret"
-$ADcred = [pscredential]::new("mcd.local\djoin",$AZDJoin.SecretValue)
-#$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
-#$ADCred = New-Object System.Management.Automation.PSCredential ("contoso\djoiner", $ADpassword)
+$ADcred = [pscredential]::new("contoso\djoin",$AZDJoin.SecretValue)
+
 
 #Set Cred for AAD tenant and subscription
 $AADAccount = "azstackadmin@azurestackdemo1.onmicrosoft.com"
@@ -204,3 +212,5 @@ $ARCSecret=$arcsecretact.SecretValue
 
 DeployAKS
 InstallArcRB
+AKSMultipleAdmins
+
