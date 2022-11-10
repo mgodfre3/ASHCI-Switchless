@@ -74,24 +74,37 @@ param ()
 function DeployAKS {
     param ()
 $azureAppCred = (New-Object System.Management.Automation.PSCredential $AzureSPNAPPId, (ConvertTo-SecureString -String $AzureSPNSecret -AsPlainText -Force))
+$azureAppCred = (New-Object System.Management.Automation.PSCredential $AzureSPNAPPId, (ConvertTo-SecureString -String $AzureSPNSecret -AsPlainText -Force))
 Connect-AzAccount -ServicePrincipal -Subscription $AzureSubID -Tenant $AzureTenantID -Credential $azureAppCred
-$context = Get-AzContext # Azure credential
+$context = Get-AzContext 
 $armtoken = Get-AzAccessToken
 $graphtoken = Get-AzAccessToken -ResourceTypeName AadGraph
+<#
+#AzResourceGroup
 
+$rg=Get-AzResourceGroup -Name $AKSResourceGroupName
+if ($rq -eq $null)
+{
+New-AzResourceGroup -Name $AKSResourceGroupName -Location "west central us" 
+    }
+else {write-host "$AKSResourceGroupName exists"
+}
+#>
 
 Write-Host "Prepping AKS Install"
 
 
     
 
-    $vnet = New-AksHciNetworkSetting -name $AKSvnetname -vSwitchName $AKSvSwitchName -k8sNodeIpPoolStart $AKSNodeStartIP -k8sNodeIpPoolEnd $AKSNodeEndIP -vipPoolStart $AKSVIPStartIP -vipPoolEnd $AKSVIPEndIP -ipAddressPrefix $AKSIPPrefix -gateway $AKSGWIP -dnsServers $AKSDNSIP        
+    $vnet = New-AksHciNetworkSetting -name $AKSvnetname -vSwitchName $AKSvSwitchName -k8sNodeIpPoolStart $AKSNodeStartIP -k8sNodeIpPoolEnd $AKSNodeEndIP -vipPoolStart $AKSVIPStartIP -vipPoolEnd $AKSVIPEndIP -ipAddressPrefix $AKSIPPrefix -gateway $AKSGWIP -dnsServers "$dnsserver", "10.255.252.5"        
 
     Set-AksHciConfig -imageDir $AKSImagedir -workingDir $AKSWorkingdir -cloudConfigLocation $AKSCloudConfigdir -vnet $vnet -cloudservicecidr $AKSCloudSvcidr
 
-    $azurecred = Connect-AzAccount -ServicePrincipal -Subscription $context.Subscription.Id -Tenant $context.Subscription.TenantId -Credential $azureAppCred
+    $azurecred = Connect-AzAccount -ServicePrincipal -Subscription $AzureSubID  -Tenant $AzureTenantID -Credential $azureAppCred
     
-    Set-AksHciRegistration -subscriptionId $azurecred.Context.Subscription.Id -resourceGroupName $AKSResourceGroupName -Tenant $azurecred.Context.Tenant.Id -Credential $azureAppCred
+    Write-Host $AKSResourceGroupName -ForegroundColor Green -BackgroundColor Black
+
+    Set-AksHciRegistration -subscriptionId $AzureSubID -resourceGroupName $AKSResourceGroupName -Tenant $AzureTenantID -Credential $azureAppCred
 
     Write-Host "Ready to Install AKS on HCI Cluster"
 
@@ -156,7 +169,9 @@ mkdir $csv_path\ResourceBridge
 
 az login --service-principal -u $AzureSPNAPPId -p $AzureSPNSecret --tenant $AzureTenantID
 
-New-ArcHciConfigFiles -subscriptionId $AzureSubID -location $Location -resourceGroup $resbridgeresource_group -resourceName $resource_name -workDirectory $csv_path\ResourceBridge -controlPlaneIP $resbridgecpip  -k8snodeippoolstart $resbridgeip -k8snodeippoolend $resbridgeip -gateway $AKSGWIP -dnsservers $AKSDNSIP -ipaddressprefix $AKSIPPrefix   
+az login --use-device-code 
+
+New-ArcHciConfigFiles -subscriptionId $AzureSubID -location $Location -resourceGroup $resbridgeresource_group -resourceName $resource_name -workDirectory $csv_path\ResourceBridge -controlPlaneIP $resbridgecpip  -k8snodeippoolstart $resbridgeip -k8snodeippoolend $resbridgeip -gateway $AKSGWIP -dnsservers "$dnsserver", "10.255.252.5" -ipaddressprefix $AKSIPPrefix   
  
 az arcappliance validate hci --config-file $csv_path\ResourceBridge\hci-appliance.yaml
 
@@ -166,51 +181,38 @@ az arcappliance prepare hci --config-file $csv_path\ResourceBridge\hci-appliance
 
 
 
-az arcappliance deploy hci --config-file  $csv_path\ResourceBridge\hci-appliance.yaml --outfile $env:USERPROFILE\.kube\config
+az arcappliance deploy hci --config-file  $csv_path\ResourceBridge\hci-appliance.yaml --outfile  $csv_path\ResourceBridge\config\
 
 
-az arcappliance create hci --config-file $csv_path\ResourceBridge\hci-appliance.yaml --kubeconfig $env:USERPROFILE\.kube\config
+az arcappliance create hci --config-file $csv_path\ResourceBridge\hci-appliance.yaml --kubeconfig $csv_path\ResourceBridge\config\
 
-Write-Host "Arc Resource Bridge has been deployed" -ForegroundColor Green -BackgroundColor Black
+Write-Host "Waiting for Arc Resource Bridge to come online" -ForegroundColor Green -BackgroundColor Black
 
-
-
-    
+Start-Sleep 180
+ 
+ Write-Host "Resource Bridge is Installed" -ForegroundColor Green -BackgroundColor Black  
 }
 
-Function AKSMultipleAdmins {
-param()
-New-Item -Path C:\clusterstoreage\volume01 -ItemType Directory -Name "AKS-Identity"
-
-$loginfile="C:\clusterstoreage\volume01\AKS-Identity\login.yaml"
-$MOCRole="AKSAdmin" #provide MOC Role Assignment Name
-
-New-MocIdentity -name $MOCRole -validityDays 365 -location MocLocation -outfile $loginFile
-
-New-MocRoleAssignment -identityName $MOCRole -roleName "GalleryImageContributor" -location MocLocation
-New-MocRoleAssignment -identityName $MocRole -roleName "SecretReader" -location MocLocation
-New-MocRoleAssignment -identityName $MocRole -roleName "NodeReader" -location MocLocation
 
 
-}
-
+#InstallModules
 
 
 $azlogin = Connect-AzAccount -Subscription $azuresubid -UseDeviceAuthentication
 Select-AzSubscription -Subscription $AzureSubID
 #Set AD Domain Cred
-$AzDJoin = Get-AzKeyVaultSecret -VaultName $KeyVault -Name "DomainJoinerSecret"
-$ADcred = [pscredential]::new("contoso\djoin",$AZDJoin.SecretValue)
-
+$AzDJoin = Get-AzKeyVaultSecret -VaultName $KeyVault -Name "djoin"
+$ADcred = [pscredential]::new("domain\djoin",$AZDJoin.SecretValue)
+$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
+$ADCred = New-Object System.Management.Automation.PSCredential ("contoso\djoiner", $ADpassword)
 
 #Set Cred for AAD tenant and subscription
-$AADAccount = "azstackadmin@azurestackdemo1.onmicrosoft.com"
+$AADAccount = "user@domain.com"
 $AADAdmin=Get-AzKeyVaultSecret -VaultName $KeyVault -Name "azurestackadmin"
-$AADCred = [pscredential]::new("azstackadmin@azurestackdemo1.onmicrosoft.com",$AADAdmin.SecretValue)
-$Arcsecretact=Get-AzKeyVaultSecret -VaultName $KeyVault -Name "ArcSPN"
+$AADCred = [pscredential]::new("user@domain.com",$AADAdmin.SecretValue)
+$Arcsecretact=Get-AzKeyVaultSecret -VaultName $KeyVault -Name "SPN"
 $ARCSecret=$arcsecretact.SecretValue
+
 
 DeployAKS
 InstallArcRB
-AKSMultipleAdmins
-

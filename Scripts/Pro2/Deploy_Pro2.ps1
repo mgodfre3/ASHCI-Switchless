@@ -31,14 +31,14 @@ $azlogin = Connect-AzAccount -Subscription $config.azuresubid
 Select-AzSubscription -Subscription $config.AzureSubID
 #Set AD Domain Cred
 $AzDJoin = Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "DomainJoinerSecret"
-$ADcred = [pscredential]::new("contoso\djoin",$AZDJoin.SecretValue)
+$ADcred = [pscredential]::new("domain\djoin",$AZDJoin.SecretValue)
 #$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
 #$ADCred = New-Object System.Management.Automation.PSCredential ("contoso\djoiner", $ADpassword)
 
 #Set Cred for AAD tenant and subscription
-$AADAccount = "azstackadmin@azurestackdemo1.onmicrosoft.com"
+$AADAccount = "user@domain.com"
 $AADAdmin=Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "azurestackadmin"
-$AADCred = [pscredential]::new("azstackadmin@azurestackdemo1.onmicrosoft.com",$AADAdmin.SecretValue)
+$AADCred = [pscredential]::new("user@domain.com",$AADAdmin.SecretValue)
 $Arcsecretact=Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "ArcSPN"
 $ARCSecret=$arcsecretact.SecretValue
 #$ARCSPN=[pscredential]::new("92ba32da-56d0-449d-b6e3-9d1c64b88a19",$ARCSecret.SecretValue) 
@@ -182,6 +182,34 @@ Invoke-Command ($ServerList) {
 } | Sort -Property PsComputerName, Count
 }
 
+function PrepareClusterPermissions {
+    param ( [string]$OuPath)
+    Import-Module ActiveDirectory
+
+    #ACL & ACLPath
+    $ACLPath = "AD:\\"+$OuPath
+    $ACL = Get-Acl "$ACLPath" -ErrorAction Stop
+    
+    #Account getting the permissions granted TO (Identity of the Cluster)
+    $computer = Get-ADComputer $config.ClusterName -ErrorAction Stop
+    $sid = [System.Security.Principal.SecurityIdentifier] $computer.SID
+    $ClusterIdentity = [System.Security.Principal.IdentityReference] $SID
+    
+    #Part 1 = Create & Delete Child Objects (for "Computer" objects only)
+    #1. Find the "Computers" Object type [NOTE: I'm 99% sure this is always "bf967a86-0de6-11d0-a285-00aa003049e2", but couldn't find MS documentation saying so
+    $ComputerObject = Get-ADObject -SearchBase (Get-ADRootDSE).SchemaNamingContext -Filter {Name -eq "computer"} -Properties SchemaIdGuid -ErrorAction Stop
+    $ComputerObjectType = [GUID]$ComputerObject.SchemaIdGuid
+    #2. Allow on create child & delete child (w/no inheritance)
+    $adRights = [System.DirectoryServices.ActiveDirectoryRights] "CreateChild, DeleteChild"
+    $AccessControlType = [System.Security.AccessControl.AccessControlType] "Allow"
+    $inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] "None"
+    #3. Set the rule
+    $ChildComputersRule = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $ClusterIdentity, $adRights, $AccessControlType, $ComputerObjectType, $inheritanceType -ErrorAction Stop
+    #4. Add Access Rule to the ACL
+    $ACL.AddAccessRule($ChildComputersRule)
+    
+}
+
 function CreateCluster {
     param ()
     Write-Host -ForegroundColor Green -Object "Creating the Cluster"
@@ -310,8 +338,8 @@ function SetNetIntents {
 Invoke-Command -ComputerName $ServerList -Credential $ADcred -Authentication Credssp {
 
 #North-South Net-Intents
-New-VMSwitch -Name "HCI" -AllowManagementOS $true -EnableEmbeddedTeaming $true -MinimumBandwidthMode Weight -NetAdapterName "MGMT1", "MGMT2"
- 
+#New-VMSwitch -Name "HCI" -AllowManagementOS $true -EnableEmbeddedTeaming $true -MinimumBandwidthMode Weight -NetAdapterName "MGMT1", "MGMT2"
+Add-NetIntent -ClusterName $using:config.ClusterName -AdapterName "MGMT1", "MGMT2"  -Name HCI -Management -Compute 
 }
 
 Invoke-Command -ComputerName $config.Node01 -Credential $ADcred -Authentication Credssp {
@@ -319,7 +347,37 @@ Invoke-Command -ComputerName $config.Node01 -Credential $ADcred -Authentication 
 Add-NetIntent -ClusterName $using:config.ClusterName -AdapterName "SMB1", "SMB2"  -Name SMB -Storage
 }
 
+<#
+start-sleep 30 
 
+Start-ClusterResource -Cluster $config.ClusterName -Name "Cluster IP Address"
+
+write-host -ForegroundColor Green -Object "Testing to ensure Cluster IP is online" 
+
+$tnc_clip=Test-NetConnection $config.ClusterIP
+if ($tnc_clip.pingsucceded -eq "true") {
+    write-host -ForegroundColor Green -Object "Cluster in online, NetworkATC was successful"
+}
+
+elseif ($tnc_clip.pingsucceded -eq "false") {
+    Start-ClusterResource -Cluster $config.ClusterName -Name Cluster IP Address
+   Start-Sleep 15
+}
+ 
+ $tnc_clip2=Test-NetConnection $config.ClusterIP
+
+if ( $tnc_clip2.pingsucceded -eq "true") {
+
+write-host -ForegroundColor Green -Object "Cluster in online, NetworkATC was successful"
+}
+
+else {
+
+Write-Host -ForegroundColor Red -Object "Please ensure Cluster Resources are online and Network configration is correct on nodes";
+
+    Start-Sleep 180
+}
+#>
 }
 
 function registerhcicluster {
@@ -343,7 +401,7 @@ param ()
 
 New-Item -Path \\$($config.Node01)\c$ -Name Temp -ItemType Directory
 
-Copy-Item .\Artifacts\InstallArcRB.ps1 -Destination \\$($config.Node01)\C$\temp
+Copy-Item C:\Scripts\InstallArcRB.ps1 -Destination \\$($config.Node01)\C$\temp
 }
 
 function runAKSRBInstall{
@@ -362,7 +420,7 @@ $remotevar=@{
                 AKSVIPEndIP= $config.AKSVIPEndIP
                 AKSIPPrefix =$config.AKSIPPrefix
                 AKSGWIP =$config.AKSGWIP
-                AKSDNSIP= "10.255.252.4"
+                AKSDNSIP= $config.AKSDNSIP
                 AKSImagedir =$config.AKSImagedir
                 AKSWorkingdir =$config.AKSWorkingdir
                 AKSCloudSvcidr =$config.AKSCloudSvcidr
@@ -422,6 +480,8 @@ $remotevar=@{
                 subscription=$config.AzureSubID
                 Location=$config.Location
                 customloc_name=$config.customloc_name
+                vSwitchName=$config.AKSvSwitchName
+
                 }
         )
 
@@ -439,14 +499,25 @@ $remotevar=@{
                 $subscription=$remotevar.subscription
                 $Location=$remotevar.Location
                 $customloc_name=$remotevar.customloc_name
-
+                $vSwitchName=$RemoteVar.AKSvSwitchName
                 
-      
+      <#
+                $AzureSPNAppID= $config.AzureSPNAppID 
+                $AzureSPNSecret= $config.AzureSPNSecret 
+                $AzureTenantID= $config.AzureTenantID
+                $resource_group=$config.resource_group
+                $subscription=$config.subscription
+                $Location=$config.Location
+                $customloc_name=$config.customloc_name
+                $vSwitchName=$config.AKSvSwitchName
+                $hciClusterId= (Get-AzureStackHci).AzureResourceUri
+                $resource_name= ((Get-AzureStackHci).AzureResourceName) + "-arcbridge"
+#>
         
         Write-Host "Logging into Azure" -ForegroundColor Green -BackgroundColor Black
 
-         az login  --service-principal -u $AzureSPNAppID -p $AzureSPNSecret  --tenant $AzureTenantID
-
+         #az login  --service-principal -u $AzureSPNAppID -p $AzureSPNSecret  --tenant $AzureTenantID
+         az login --use-device-code
          az config set extension.use_dynamic_install=yes_without_prompt
 
          $hciClusterId= (Get-AzureStackHci).AzureResourceUri
@@ -458,22 +529,27 @@ $remotevar=@{
 
 
         Write-Host "Creating Custom Location $customloc_name" -ForegroundColor Green -BackgroundColor Black
-         az customlocation create --resource-group $resource_group --name $customloc_name --cluster-extension-ids "/subscriptions/$subscription/resourceGroups/$resource_group/providers/Microsoft.ResourceConnector/appliances/$resource_name/providers/Microsoft.KubernetesConfiguration/extensions/hci-vmoperator" --namespace hci-vmoperator --host-resource-id "/subscriptions/$subscription/resourceGroups/$resource_group/providers/Microsoft.ResourceConnector/appliances/$resource_name" --location $Location
+         az customlocation create --resource-group $resource_group --name $customloc_name --cluster-extension-ids "/subscriptions/$subscription/resourceGroups/$resource_group/providers/Microsoft.ResourceConnector/appliances/$resource_name/providers/Microsoft.KubernetesConfiguration/extensions/hci-vmoperator" --namespace default --host-resource-id "/subscriptions/$subscription/resourceGroups/$resource_group/providers/Microsoft.ResourceConnector/appliances/$resource_name" --location $Location
 
-         Write-Host "Creating Virtual Network Resource" -ForegroundColor Green -BackgroundColor Black
-         $vnetName="hci"
-         az azurestackhci virtualnetwork create --subscription $subscription --resource-group $resource_group --extended-location name="/subscriptions/$subscription/resourceGroups/$resource_group/providers/Microsoft.ExtendedLocation/customLocations/$customloc_name" type="CustomLocation" --location $Location --network-type "Transparent" --name $vnetName
+         Write-Host "Creating Virtual Network Resource for Arc Virtual Machine Management" -ForegroundColor Green -BackgroundColor Black
+         #$vlanid="0"   
+         $vnetName="default-vnet"
+         New-MocGroup -name "Default_Group" -location "MocLocation"
+         New-MocVirtualNetwork -name "$vnetName" -group "Default_Group" -tags @{'VSwitch-Name' = "ConvergedSwitch(hci)"} 
+         az azurestackhci virtualnetwork create --subscription $subscription --resource-group $resource_group --extended-location name="/subscriptions/$subscription/resourceGroups/$resource_group/providers/Microsoft.ExtendedLocation/customLocations/$customloc_name" type="CustomLocation" --location $Location --network-type "Transparent" --name $vnetName #--vlan $vlanid
+
+
+        Write-Host "Creating Custom Location and Network Resources for Hybid AKS Cluster Provisioning"
+
+        
+        
+       
 
          Write-Host "Custom Resource is a Success!" -ForegroundColor Green -BackgroundColor Black
-         <#
-         $galleryImageName1="Server22DC-DE"
-         $galleryImageSourcePath1="\\contoso\centralshare\Share\GalleryImages\Server2022\Server22DC-DE.vhdx"
-         $osType="Windows"
-         az azurestackhci galleryimage create --subscription $subscription --resource-group $resource_group --extended-location name="/subscriptions/$subscription/resourceGroups/$resource_group/providers/Microsoft.ExtendedLocation/customLocations/$customloc_name" type="CustomLocation" --location $Location --image-path $galleryImageSourcePath1 --name $galleryImageName1 --os-type $osType
-         #>
-         }
     
+         
     }
+}
 
 
 #End Function Region
@@ -489,16 +565,16 @@ $ServerList = $config.Node01, $config.Node02
 $azlogin = Connect-AzAccount -Subscription $config.azuresubid 
 Select-AzSubscription -Subscription $config.AzureSubID
 #Set AD Domain Cred
-$AzDJoin = Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "DomainJoinerSecret"
-$ADcred = [pscredential]::new("contoso\djoin",$AZDJoin.SecretValue)
+$AzDJoin = Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "djoin"
+$ADcred = [pscredential]::new("fc\djoin",$AZDJoin.SecretValue)
 #$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
 #$ADCred = New-Object System.Management.Automation.PSCredential ("contoso\djoiner", $ADpassword)
 
 #Set Cred for AAD tenant and subscription
-$AADAccount = "azstackadmin@azurestackdemo1.onmicrosoft.com"
+$AADAccount = "user@domain.com"
 $AADAdmin=Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "azurestackadmin"
-$AADCred = [pscredential]::new("azstackadmin@azurestackdemo1.onmicrosoft.com",$AADAdmin.SecretValue)
-$Arcsecretact=Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "ArcSPN"
+$AADCred = [pscredential]::new("user@domain.com",$AADAdmin.SecretValue)
+$Arcsecretact=Get-AzKeyVaultSecret -VaultName $config.KeyVault -Name "SPN"
 $ARCSecret=$arcsecretact.SecretValue
 $Session1=New-PSSession -ComputerName $config.Node01 -Credential $ADcred -Authentication Credssp
 
@@ -574,39 +650,7 @@ addcustomlocation
                 $ErrorActionPreference = $orginalErrorAction
             }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # Main execution begins here
-
-
-
-
 
 
 
