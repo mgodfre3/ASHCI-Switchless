@@ -1,7 +1,8 @@
 $akshybrid_extname=$customloc_name += "-aks"
 
 #VM
-az k8s-extension create --cluster-type appliances --cluster-name $resource_name --resource-group $resource_group --name hci-vmoperator --extension-type Microsoft.AZStackHCI.Operator --scope cluster --release-namespace helm-operator2 --configuration-settings Microsoft.CustomLocation.ServiceAccount=hci-vmoperator --configuration-protected-settings-file $csv_path\ResourceBridge\hci-config.json --configuration-settings HCIClusterID=$hciClusterId --auto-upgrade true
+az k8s-extension create --cluster-type appliances --cluster-name $resource_name --resource-group $resource_group --name hci-vmoperator --extension-type Microsoft.AZStackHCI.Operator --scope cluster --release-namespace default--configuration-settings Microsoft.CustomLocation.ServiceAccount="default" --configuration-protected-settings-file $csv_path\ResourceBridge\hci-config.json --configuration-settings HCIClusterID=$hciClusterId --auto-upgrade true
+
 #AKS
 az k8s-extension create --resource-group $resource_group --cluster-name $resource_name --cluster-type appliances --name $akshybrid_extname  --extension-type Microsoft.HybridAKSOperator  --config Microsoft.CustomLocation.ServiceAccount="default"
 
