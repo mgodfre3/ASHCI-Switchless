@@ -200,16 +200,7 @@ Start-Sleep 180
 
 $azlogin = Connect-AzAccount -Subscription $azuresubid -UseDeviceAuthentication
 Select-AzSubscription -Subscription $AzureSubID
-#Set AD Domain Cred
-$AzDJoin = Get-AzKeyVaultSecret -VaultName $KeyVault -Name "djoin"
-$ADcred = [pscredential]::new("domain\djoin",$AZDJoin.SecretValue)
-$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
-$ADCred = New-Object System.Management.Automation.PSCredential ("contoso\djoiner", $ADpassword)
 
-#Set Cred for AAD tenant and subscription
-$AADAccount = "user@domain.com"
-$AADAdmin=Get-AzKeyVaultSecret -VaultName $KeyVault -Name "azurestackadmin"
-$AADCred = [pscredential]::new("user@domain.com",$AADAdmin.SecretValue)
 $Arcsecretact=Get-AzKeyVaultSecret -VaultName $KeyVault -Name "SPN"
 $ARCSecret=$arcsecretact.SecretValue
 
